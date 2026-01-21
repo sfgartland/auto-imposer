@@ -224,6 +224,10 @@ def generate_preview_image(doc, scale, slot_width, gap_pt, vertical_shift_pt, sh
     p_left = sheet_index
     p_right = half + sheet_index
     
+    # Duplex Logic: Swap on odd sheets
+    if sheet_index % 2 == 1:
+        p_left, p_right = p_right, p_left
+    
     page = create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt)
     
     # --- Preview Visual Overlays ---
@@ -272,6 +276,13 @@ def generate_imposed_pdf(doc, scale, slot_width, gap_pt, vertical_shift_pt, show
     for i in range(half):
         p_left = i
         p_right = half + i
+        
+        # Duplex Logic: Swap Left/Right on odd sheets (Back sides)
+        # Sheet 0 (Front): Left=P0, Right=P_mid.
+        # Sheet 1 (Back): Left=P_mid+1, Right=P1. (Because Right backs Left).
+        if i % 2 == 1:
+            p_left, p_right = p_right, p_left
+            
         create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt)
         
     return out_pdf.tobytes()
@@ -300,6 +311,10 @@ cut_mark_padding_mm = 20.0
 if show_cut_marks:
     cut_mark_padding_mm = st.sidebar.slider("Cut Mark Padding (mm)", min_value=0.0, max_value=50.0, value=20.0, step=1.0)
 
+st.sidebar.markdown("---")
+add_blank_start = st.sidebar.checkbox("Add Blank Page to Start", value=False)
+add_blank_end = st.sidebar.checkbox("Add Blank Page to End", value=False)
+
 # Conditional Inputs
 final_scale = 1.0
 effective_font = 0.0
@@ -313,6 +328,13 @@ if uploaded_file:
     
     # Open doc for LIVE usage (preview/generation) - fast operation
     doc = fitz.open(stream=file_bytes, filetype="pdf")
+    
+    # Apply modifications (Blank Pages)
+    if add_blank_start:
+        doc.insert_page(0) # Insert at index 0
+        
+    if add_blank_end:
+        doc.new_page() # Append to end
     
     # Optimized Analysis with Caching
     # Passes bytes to cached function
@@ -364,13 +386,15 @@ if uploaded_file:
         st.markdown(f"**Vertical Shift:** {vertical_shift_mm} mm")
         st.markdown(f"**Cut Marks:** {'Yes' if show_cut_marks else 'No'} (Pad: {cut_mark_padding_mm}mm)")
         
-        if st.button("Download Imposed PDF", type="primary"):
+        if st.button("Generate Imposed PDF", type="primary"):
             with st.spinner("Generating full PDF..."):
                 pdf_bytes = generate_imposed_pdf(doc, final_scale, slot_width, gap_mm * MM_TO_PT, vertical_shift_mm * MM_TO_PT, show_cut_marks, cut_mark_padding_mm * MM_TO_PT)
+            
+            out_name = f"imposed_{uploaded_file.name}"
             st.download_button(
-                label="Save imposed_book.pdf",
+                label=f"Download {out_name}",
                 data=pdf_bytes,
-                file_name="imposed_book.pdf",
+                file_name=out_name,
                 mime="application/pdf"
             )
 
