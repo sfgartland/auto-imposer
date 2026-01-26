@@ -131,7 +131,7 @@ def calculate_auto_scale(doc_stats, target_font_size, min_margin_mm, gap_mm):
     
     return final_scale, median_font * final_scale, slot_width
 
-def create_imposed_page(writer, doc, p_left_idx, p_right_idx, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt, target_size=(842, 595)):
+def create_imposed_page(writer, doc, p_left_idx, p_right_idx, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt, show_alignment_markers, target_size=(842, 595)):
     """
     Creates a single A4 landscape page with p_left and p_right.
     """
@@ -176,6 +176,41 @@ def create_imposed_page(writer, doc, p_left_idx, p_right_idx, scale, slot_width,
             right_slot_center_y + p_h/2
         )
         out_page.show_pdf_page(rect_right, doc, p_right_idx)
+
+    if show_alignment_markers:
+        shape = out_page.new_shape()
+        marker_len = 12
+        offset = 18 # Distance from corner
+        
+        # Helper to draw at a point
+        def draw_cross(cx, cy):
+            shape.draw_line((cx - marker_len/2, cy), (cx + marker_len/2, cy))
+            shape.draw_line((cx, cy - marker_len/2), (cx, cy + marker_len/2))
+
+        # Check Left Page
+        if p_left_idx < len(doc):
+            # Page Index 0 = Page 1 (Odd) -> Bottom Right
+            # Page Index 1 = Page 2 (Even) -> Bottom Left
+            # p_left_idx uses 0-based index. 
+            # If (idx + 1) is Odd: Bottom Right. Even: Bottom Left.
+            is_odd = (p_left_idx + 1) % 2 == 1
+            if is_odd:
+                 # Bottom Right of rect_left
+                 draw_cross(rect_left.x1 - offset, rect_left.y1 - offset)
+            else:
+                 # Bottom Left of rect_left
+                 draw_cross(rect_left.x0 + offset, rect_left.y1 - offset)
+                 
+        # Check Right Page
+        if p_right_idx < len(doc):
+            is_odd = (p_right_idx + 1) % 2 == 1
+            if is_odd:
+                 draw_cross(rect_right.x1 - offset, rect_right.y1 - offset)
+            else:
+                 draw_cross(rect_right.x0 + offset, rect_right.y1 - offset)
+        
+        shape.finish(color=(1, 0, 0), width=0.5)
+        shape.commit()
         
     if show_cut_marks:
         # Draw cut marks at the center of the sheet (or gap center)
@@ -201,7 +236,7 @@ def create_imposed_page(writer, doc, p_left_idx, p_right_idx, scale, slot_width,
         
     return out_page
 
-def generate_preview_image(doc, scale, slot_width, gap_pt, vertical_shift_pt, sheet_index, show_cut_marks, cut_mark_padding_pt):
+def generate_preview_image(doc, scale, slot_width, gap_pt, vertical_shift_pt, sheet_index, show_cut_marks, cut_mark_padding_pt, show_alignment_markers):
     """
     Generates a preview image of a specific imposed sheet.
     """
@@ -228,7 +263,7 @@ def generate_preview_image(doc, scale, slot_width, gap_pt, vertical_shift_pt, sh
     if sheet_index % 2 == 1:
         p_left, p_right = p_right, p_left
     
-    page = create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt)
+    page = create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt, show_alignment_markers)
     
     # --- Preview Visual Overlays ---
     shape = page.new_shape()
@@ -266,7 +301,7 @@ def generate_preview_image(doc, scale, slot_width, gap_pt, vertical_shift_pt, sh
     out_pdf.close()
     return data
 
-def generate_imposed_pdf(doc, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt):
+def generate_imposed_pdf(doc, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt, show_alignment_markers):
     out_pdf = fitz.open()
     total_pages = len(doc)
     n = total_pages
@@ -283,7 +318,7 @@ def generate_imposed_pdf(doc, scale, slot_width, gap_pt, vertical_shift_pt, show
         if i % 2 == 1:
             p_left, p_right = p_right, p_left
             
-        create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt)
+        create_imposed_page(out_pdf, doc, p_left, p_right, scale, slot_width, gap_pt, vertical_shift_pt, show_cut_marks, cut_mark_padding_pt, show_alignment_markers)
         
     return out_pdf.tobytes()
 
@@ -311,9 +346,12 @@ cut_mark_padding_mm = 20.0
 if show_cut_marks:
     cut_mark_padding_mm = st.sidebar.slider("Cut Mark Padding (mm)", min_value=0.0, max_value=50.0, value=20.0, step=1.0)
 
+show_alignment_markers = st.sidebar.checkbox("Show Alignment Markers (Preview Only)", value=False, help="Adds crosshairs to the preview to verify page alignment.")
+
 st.sidebar.markdown("---")
 add_blank_start = st.sidebar.checkbox("Add Blank Page to Start", value=False)
 add_blank_end = st.sidebar.checkbox("Add Blank Page to End", value=False)
+align_stacks = st.sidebar.checkbox("Align Stacks (Smart Split)", value=False, help="Adjusts strict spread calculation to ensure both stacks start on a Recto page. Adds blanks to end of document if needed.")
 
 # Conditional Inputs
 final_scale = 1.0
@@ -335,6 +373,27 @@ if uploaded_file:
         
     if add_blank_end:
         doc.new_page() # Append to end
+        
+    if align_stacks:
+        # Smart Split Logic
+        # Goal: Ensure S2 starts on an Even Index (Odd Page Number).
+        n = len(doc)
+        half = (n + 1) // 2
+        
+        # S2 starts at index 'half'.
+        # We need 'half' to be Even (0, 2, 4...).
+        if half % 2 != 0:
+             # Shift split point right by 1 -> S1 gets one more page.
+             # New half will be half + 1 (Even).
+             half += 1
+             
+        # Now we need Total Pages to be exactly 2 * half.
+        # This ensures that when the generator splits by total//2, it hits our target 'half'.
+        target_total = half * 2
+        needed_blanks = target_total - n
+        
+        for _ in range(needed_blanks):
+            doc.new_page()
     
     # Optimized Analysis with Caching
     # Passes bytes to cached function
@@ -388,7 +447,8 @@ if uploaded_file:
         
         if st.button("Generate Imposed PDF", type="primary"):
             with st.spinner("Generating full PDF..."):
-                pdf_bytes = generate_imposed_pdf(doc, final_scale, slot_width, gap_mm * MM_TO_PT, vertical_shift_mm * MM_TO_PT, show_cut_marks, cut_mark_padding_mm * MM_TO_PT)
+                # Always pass False for alignment markers in the final output
+                pdf_bytes = generate_imposed_pdf(doc, final_scale, slot_width, gap_mm * MM_TO_PT, vertical_shift_mm * MM_TO_PT, show_cut_marks, cut_mark_padding_mm * MM_TO_PT, show_alignment_markers=False)
             
             out_name = f"imposed_{uploaded_file.name}"
             st.download_button(
@@ -397,10 +457,9 @@ if uploaded_file:
                 file_name=out_name,
                 mime="application/pdf"
             )
-
     with col2:
         st.subheader(f"Live Preview (Sheet {preview_sheet_idx + 1})")
-        preview_png = generate_preview_image(doc, final_scale, slot_width, gap_mm * MM_TO_PT, vertical_shift_mm * MM_TO_PT, preview_sheet_idx, show_cut_marks, cut_mark_padding_mm * MM_TO_PT)
+        preview_png = generate_preview_image(doc, final_scale, slot_width, gap_mm * MM_TO_PT, vertical_shift_mm * MM_TO_PT, preview_sheet_idx, show_cut_marks, cut_mark_padding_mm * MM_TO_PT, show_alignment_markers)
         
         if preview_png:
             try:
