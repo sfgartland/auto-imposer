@@ -327,8 +327,29 @@ def generate_imposed_pdf(doc, scale, slot_width, gap_pt, vertical_shift_pt, show
 
 st.set_page_config(page_title="PDF Imposer", layout="wide")
 
-st.title("📄 Smart PDF Imposer (Cut & Stack)")
-st.markdown("Upload an A5 PDF to impose it onto A4 paper.")
+# Session State for Password Prompt
+if "show_pwd_prompt" not in st.session_state:
+    st.session_state.show_pwd_prompt = False
+
+col1, col2 = st.columns([4, 1])
+with col1:
+    st.title("📄 Smart PDF Imposer (Cut & Stack)")
+    st.markdown("Upload an A5 PDF to impose it onto A4 paper.")
+
+with col2:
+    st.write("") # Spacer
+    st.write("") # Spacer
+    if st.button("too pdf storage"):
+        st.session_state.show_pwd_prompt = not st.session_state.show_pwd_prompt
+
+if st.session_state.show_pwd_prompt:
+    pwd = st.text_input("Enter Password to access storage:", type="password")
+    if pwd == "severin":
+        # Clear the prompt state so it doesn't persist awkwardly if they come back
+        st.session_state.show_pwd_prompt = False 
+        st.markdown('<meta http-equiv="refresh" content="0;url=https://drive.google.com/drive/folders/1RkboXBkm0qSGYIW9dG79_tDgYpC-H4dc">', unsafe_allow_html=True)
+    elif pwd:
+        st.error("Incorrect Password")
 
 # Sidebar
 st.sidebar.header("Configuration")
